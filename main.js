@@ -13,6 +13,8 @@ const bloomCheckbox = document.getElementById("toggleBloom");
 let bloomEnabled = bloomCheckbox ? bloomCheckbox.checked : false;
 const vignetteCheckbox = document.getElementById("toggleVignette");
 let vignetteEnabled = vignetteCheckbox ? vignetteCheckbox.checked : false;
+const grainCheckbox = document.getElementById("toggleGrain");
+let grainEnabled = grainCheckbox ? grainCheckbox.checked : false;
 
 if (bloomCheckbox) {
     bloomCheckbox.addEventListener("change", (event) => {
@@ -23,6 +25,12 @@ if (bloomCheckbox) {
 if (vignetteCheckbox) {
     vignetteCheckbox.addEventListener("change", (event) => {
         vignetteEnabled = event.target.checked;
+    });
+}
+
+if (grainCheckbox) {
+    grainCheckbox.addEventListener("change", (event) => {
+        grainEnabled = event.target.checked;
     });
 }
 
@@ -191,6 +199,8 @@ uniform sampler2D uSceneTex;
 uniform vec2 uTexelSize;
 uniform float uBloomStrength;
 uniform float uVignetteStrength;
+uniform float uGrainStrength;
+uniform float uTime;
 
 out vec4 outColor;
 
@@ -199,6 +209,10 @@ vec3 extractBright(vec2 uv) {
     float luminance = dot(c, vec3(0.2126, 0.7152, 0.0722));
     float mask = smoothstep(0.62, 1.0, luminance);
     return c * mask;
+}
+
+float randomNoise(vec2 p) {
+    return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
 }
 
 void main() {
@@ -218,6 +232,11 @@ void main() {
     float dist = length(centeredUv);
     float vignette = 1.0 - smoothstep(0.45, 1.12, dist);
     color *= mix(1.0, vignette, uVignetteStrength);
+
+    vec2 pixel = vUV / uTexelSize;
+    float grain = randomNoise(pixel + vec2(uTime * 60.0, uTime * 23.0)) - 0.5;
+    color += grain * uGrainStrength;
+    color = clamp(color, 0.0, 1.0);
 
     outColor = vec4(color, 1.0);
 }
@@ -268,6 +287,8 @@ const postSceneTexLoc = gl.getUniformLocation(postProgram, "uSceneTex");
 const postTexelSizeLoc = gl.getUniformLocation(postProgram, "uTexelSize");
 const postBloomStrengthLoc = gl.getUniformLocation(postProgram, "uBloomStrength");
 const postVignetteStrengthLoc = gl.getUniformLocation(postProgram, "uVignetteStrength");
+const postGrainStrengthLoc = gl.getUniformLocation(postProgram, "uGrainStrength");
+const postTimeLoc = gl.getUniformLocation(postProgram, "uTime");
 
 const postQuad = new Float32Array([
     -1, -1, 0, 0,
@@ -623,17 +644,17 @@ function drawScene() {
 }
 
 function render() {
-    if (bloomEnabled || vignetteEnabled) {
+    if (bloomEnabled || vignetteEnabled || grainEnabled) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFbo);
         gl.viewport(0, 0, canvas.width, canvas.height);
-        gl.clearColor(0.96, 0.92, 0.99, 1);
+        gl.clearColor(1.0, 1.0, 1.0, 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
         drawScene();
 
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.viewport(0, 0, canvas.width, canvas.height);
-        gl.clearColor(0.96, 0.92, 0.99, 1);
+        gl.clearColor(1.0, 1.0, 1.0, 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT);
 
         gl.disable(gl.DEPTH_TEST);
@@ -644,6 +665,8 @@ function render() {
         gl.uniform2f(postTexelSizeLoc, 1 / canvas.width, 1 / canvas.height);
         gl.uniform1f(postBloomStrengthLoc, bloomEnabled ? 0.85 : 0.0);
         gl.uniform1f(postVignetteStrengthLoc, vignetteEnabled ? 1.0 : 0.0);
+        gl.uniform1f(postGrainStrengthLoc, grainEnabled ? 0.14 : 0.0);
+        gl.uniform1f(postTimeLoc, performance.now() * 0.001);
 
         gl.bindVertexArray(postVao);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
@@ -652,7 +675,7 @@ function render() {
     } else {
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.viewport(0, 0, canvas.width, canvas.height);
-        gl.clearColor(0.96, 0.92, 0.99, 1);
+        gl.clearColor(1.0, 1.0, 1.0, 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         drawScene();
     }
