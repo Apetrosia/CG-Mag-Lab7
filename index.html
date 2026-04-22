@@ -9,6 +9,7 @@
     padding: 0;
     height: 100%;
     overflow: hidden;
+    background: #05060a;
   }
 
   canvas {
@@ -16,9 +17,60 @@
     width: 100vw;
     height: 100vh;
   }
+
+  #controls {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 2;
+    display: grid;
+    gap: 8px;
+    padding: 12px 14px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 14px;
+    background: rgba(10, 12, 18, 0.72);
+    color: #f3f5ff;
+    font-family: system-ui, sans-serif;
+    font-size: 14px;
+    backdrop-filter: blur(10px);
+    min-width: 190px;
+  }
+
+  #controls label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  #info {
+    position: absolute;
+    left: 12px;
+    top: 12px;
+    z-index: 2;
+    color: #f3f5ff;
+    font-family: system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.45;
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: rgba(10, 12, 18, 0.65);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    backdrop-filter: blur(10px);
+    white-space: pre-line;
+  }
 </style>
 <body>
-  <div id="info" style="position:absolute;top:10px;left:10px;color:white;font-family:sans-serif;"></div>
+  <div id="info"></div>
+  <div id="controls">
+    <label><input type="checkbox" id="toggleBloom" checked> Bloom</label>
+    <label><input type="checkbox" id="toggleVignette" checked> Vignette</label>
+    <label><input type="checkbox" id="toggleGrain" checked> Grain</label>
+    <label><input type="checkbox" id="toggleDof" checked> Depth of Field</label>
+    <label><input type="checkbox" id="toggleGrading" checked> Color Grading</label>
+    <label><input type="checkbox" id="toggleAdaptive" checked> Adaptive Quality</label>
+  </div>
   <canvas id="glcanvas" width="600" height="600"></canvas>
   <script src="main.js"></script>
 </body>
