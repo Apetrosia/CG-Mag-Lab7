@@ -1,0 +1,25 @@
+{
+  "name": "cg-mag-lab7",
+  "version": "1.0.0",
+  "description": "__Реализовать приложение с постобработкой:__",
+  "main": "main.js",
+  "scripts": {
+    "start": "serve",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Apetrosia/CG-Mag-Lab7.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Apetrosia/CG-Mag-Lab7/issues"
+  },
+  "homepage": "https://github.com/Apetrosia/CG-Mag-Lab7#readme",
+  "devDependencies": {
+    "serve": "^14.2.6"
+  }
+}
