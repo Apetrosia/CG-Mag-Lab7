@@ -149,29 +149,6 @@ void main() {
 }
 `;
 
-// Модели
-const vsModel = `#version 300 es
-in vec3 aPosition;
-in vec2 aUV;
-out vec2 vUV;
-uniform mat4 uModel;
-uniform mat4 uProjection;
-void main() {
-    gl_Position = uProjection * uModel * vec4(aPosition, 1.0);
-    vUV = aUV;
-}
-`;
-
-const fsModel = `#version 300 es
-precision mediump float;
-in vec2 vUV;
-uniform sampler2D uTexture;
-out vec4 outColor;
-void main() {
-    outColor = texture(uTexture, vUV);
-}
-`;
-
 function createShader(gl, type, source) {
     const shader = gl.createShader(type);
     gl.shaderSource(shader, source);
@@ -199,21 +176,7 @@ if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
 
 gl.useProgram(program);
 
-// Программа для моделей
-const vertexShaderModel = createShader(gl, gl.VERTEX_SHADER, vsModel);
-const fragmentShaderModel = createShader(gl, gl.FRAGMENT_SHADER, fsModel);
-const programModel = gl.createProgram();
-gl.attachShader(programModel, vertexShaderModel);
-gl.attachShader(programModel, fragmentShaderModel);
-gl.linkProgram(programModel);
-
-if (!gl.getProgramParameter(programModel, gl.LINK_STATUS)) {
-    console.error(gl.getProgramInfoLog(programModel));
-}
-
-const modelLocModel = gl.getUniformLocation(programModel, "uModel");
-const projLocModel = gl.getUniformLocation(programModel, "uProjection");
-const texLocModel = gl.getUniformLocation(programModel, "uTexture");
+const textureLoc = gl.getUniformLocation(program, "uTextureMat");
 
 // КУБЫ
 
@@ -400,8 +363,8 @@ async function loadModel(name, posX, posY, scale) {
         gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
         gl.bufferData(gl.ARRAY_BUFFER, objData.vertices, gl.STATIC_DRAW);
         
-        const posLoc = gl.getAttribLocation(programModel, "aPosition");
-        const uvLoc = gl.getAttribLocation(programModel, "aUV");
+        const posLoc = gl.getAttribLocation(program, "aPosition");
+        const uvLoc = gl.getAttribLocation(program, "aUV");
         
         gl.enableVertexAttribArray(posLoc);
         gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 5 * 4, 0);
@@ -452,11 +415,9 @@ function renderCube(num, tx) {
     gl.uniformMatrix4fv(modelLoc, false, model);
     gl.uniformMatrix4fv(projectionLoc, false, projection);
 
-    const texLoc1 = gl.getUniformLocation(program, "uTextureMat");
-
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, textureMat[num]);
-    gl.uniform1i(texLoc1, 0);
+    gl.uniform1i(textureLoc, 0);
 
     gl.bindVertexArray(vao);
     gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0);
@@ -474,8 +435,6 @@ function render() {
     renderCube(2, 1);
     
     if (models.length > 0) {
-        gl.useProgram(programModel);
-        
         const aspect = canvas.width / canvas.height;
         const projection = createPerspectiveMatrix(Math.PI / 4, aspect, 0.1, 100);
         
@@ -486,12 +445,12 @@ function render() {
                 model.posX, model.posY, -4
             );
             
-            gl.uniformMatrix4fv(modelLocModel, false, modelMatrix);
-            gl.uniformMatrix4fv(projLocModel, false, projection);
+            gl.uniformMatrix4fv(modelLoc, false, modelMatrix);
+            gl.uniformMatrix4fv(projectionLoc, false, projection);
             
             gl.activeTexture(gl.TEXTURE0);
             gl.bindTexture(gl.TEXTURE_2D, model.texture);
-            gl.uniform1i(texLocModel, 0);
+            gl.uniform1i(textureLoc, 0);
             
             gl.bindVertexArray(model.vao);
             gl.drawArrays(gl.TRIANGLES, 0, model.count);
