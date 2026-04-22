@@ -11,10 +11,18 @@ let sceneDepthRb = null;
 
 const bloomCheckbox = document.getElementById("toggleBloom");
 let bloomEnabled = bloomCheckbox ? bloomCheckbox.checked : false;
+const vignetteCheckbox = document.getElementById("toggleVignette");
+let vignetteEnabled = vignetteCheckbox ? vignetteCheckbox.checked : false;
 
 if (bloomCheckbox) {
     bloomCheckbox.addEventListener("change", (event) => {
         bloomEnabled = event.target.checked;
+    });
+}
+
+if (vignetteCheckbox) {
+    vignetteCheckbox.addEventListener("change", (event) => {
+        vignetteEnabled = event.target.checked;
     });
 }
 
@@ -182,6 +190,7 @@ in vec2 vUV;
 uniform sampler2D uSceneTex;
 uniform vec2 uTexelSize;
 uniform float uBloomStrength;
+uniform float uVignetteStrength;
 
 out vec4 outColor;
 
@@ -204,6 +213,12 @@ void main() {
     bloom += (extractBright(vUV + vec2(-o2.x, o2.y)) + extractBright(vUV + vec2(o2.x, -o2.y))) * 0.08;
 
     vec3 color = base + bloom * uBloomStrength;
+
+    vec2 centeredUv = vUV * 2.0 - 1.0;
+    float dist = length(centeredUv);
+    float vignette = 1.0 - smoothstep(0.45, 1.12, dist);
+    color *= mix(1.0, vignette, uVignetteStrength);
+
     outColor = vec4(color, 1.0);
 }
 `;
@@ -252,6 +267,7 @@ if (!gl.getProgramParameter(postProgram, gl.LINK_STATUS)) {
 const postSceneTexLoc = gl.getUniformLocation(postProgram, "uSceneTex");
 const postTexelSizeLoc = gl.getUniformLocation(postProgram, "uTexelSize");
 const postBloomStrengthLoc = gl.getUniformLocation(postProgram, "uBloomStrength");
+const postVignetteStrengthLoc = gl.getUniformLocation(postProgram, "uVignetteStrength");
 
 const postQuad = new Float32Array([
     -1, -1, 0, 0,
@@ -607,17 +623,17 @@ function drawScene() {
 }
 
 function render() {
-    if (bloomEnabled) {
+    if (bloomEnabled || vignetteEnabled) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFbo);
         gl.viewport(0, 0, canvas.width, canvas.height);
-        gl.clearColor(0.98, 0.96, 1.0, 1);
+        gl.clearColor(0.96, 0.92, 0.99, 1);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
         drawScene();
 
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.viewport(0, 0, canvas.width, canvas.height);
-        gl.clearColor(0.98, 0.96, 1.0, 1);
+        gl.clearColor(0.96, 0.92, 0.99, 1);
         gl.clear(gl.COLOR_BUFFER_BIT);
 
         gl.disable(gl.DEPTH_TEST);
@@ -626,7 +642,8 @@ function render() {
         gl.bindTexture(gl.TEXTURE_2D, sceneColorTex);
         gl.uniform1i(postSceneTexLoc, 0);
         gl.uniform2f(postTexelSizeLoc, 1 / canvas.width, 1 / canvas.height);
-        gl.uniform1f(postBloomStrengthLoc, 0.85);
+        gl.uniform1f(postBloomStrengthLoc, bloomEnabled ? 0.85 : 0.0);
+        gl.uniform1f(postVignetteStrengthLoc, vignetteEnabled ? 1.0 : 0.0);
 
         gl.bindVertexArray(postVao);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
@@ -635,7 +652,7 @@ function render() {
     } else {
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.viewport(0, 0, canvas.width, canvas.height);
-        gl.clearColor(0.98, 0.96, 1.0, 1);
+        gl.clearColor(0.96, 0.92, 0.99, 1);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         drawScene();
     }
