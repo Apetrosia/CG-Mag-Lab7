@@ -5,10 +5,24 @@ if (!gl) {
     alert("WebGL2 not supported");
 }
 
+let sceneFbo = null;
+let sceneColorTex = null;
+let sceneDepthRb = null;
+
+const bloomCheckbox = document.getElementById("toggleBloom");
+let bloomEnabled = bloomCheckbox ? bloomCheckbox.checked : false;
+
+if (bloomCheckbox) {
+    bloomCheckbox.addEventListener("change", (event) => {
+        bloomEnabled = event.target.checked;
+    });
+}
+
 function resizeCanvas() {
     canvas.height = window.innerHeight;
     canvas.width = window.innerWidth;
     gl.viewport(0, 0, canvas.width, canvas.height);
+    resizeRenderTargets();
 }
 
 window.addEventListener("resize", resizeCanvas);
@@ -149,6 +163,51 @@ void main() {
 }
 `;
 
+const postVsSource = `#version 300 es
+in vec2 aPosition;
+in vec2 aUV;
+out vec2 vUV;
+
+void main() {
+    vUV = aUV;
+    gl_Position = vec4(aPosition, 0.0, 1.0);
+}
+`;
+
+const postFsSource = `#version 300 es
+precision highp float;
+
+in vec2 vUV;
+
+uniform sampler2D uSceneTex;
+uniform vec2 uTexelSize;
+uniform float uBloomStrength;
+
+out vec4 outColor;
+
+vec3 extractBright(vec2 uv) {
+    vec3 c = texture(uSceneTex, uv).rgb;
+    float luminance = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    float mask = smoothstep(0.62, 1.0, luminance);
+    return c * mask;
+}
+
+void main() {
+    vec3 base = texture(uSceneTex, vUV).rgb;
+    vec2 o1 = uTexelSize * 1.5;
+    vec2 o2 = uTexelSize * 3.0;
+
+    vec3 bloom = extractBright(vUV) * 0.24;
+    bloom += (extractBright(vUV + vec2(o1.x, 0.0)) + extractBright(vUV - vec2(o1.x, 0.0))) * 0.15;
+    bloom += (extractBright(vUV + vec2(0.0, o1.y)) + extractBright(vUV - vec2(0.0, o1.y))) * 0.15;
+    bloom += (extractBright(vUV + o2) + extractBright(vUV - o2)) * 0.08;
+    bloom += (extractBright(vUV + vec2(-o2.x, o2.y)) + extractBright(vUV + vec2(o2.x, -o2.y))) * 0.08;
+
+    vec3 color = base + bloom * uBloomStrength;
+    outColor = vec4(color, 1.0);
+}
+`;
+
 function createShader(gl, type, source) {
     const shader = gl.createShader(type);
     gl.shaderSource(shader, source);
@@ -177,6 +236,98 @@ if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
 gl.useProgram(program);
 
 const textureLoc = gl.getUniformLocation(program, "uTextureMat");
+
+const postVertexShader = createShader(gl, gl.VERTEX_SHADER, postVsSource);
+const postFragmentShader = createShader(gl, gl.FRAGMENT_SHADER, postFsSource);
+
+const postProgram = gl.createProgram();
+gl.attachShader(postProgram, postVertexShader);
+gl.attachShader(postProgram, postFragmentShader);
+gl.linkProgram(postProgram);
+
+if (!gl.getProgramParameter(postProgram, gl.LINK_STATUS)) {
+    console.error(gl.getProgramInfoLog(postProgram));
+}
+
+const postSceneTexLoc = gl.getUniformLocation(postProgram, "uSceneTex");
+const postTexelSizeLoc = gl.getUniformLocation(postProgram, "uTexelSize");
+const postBloomStrengthLoc = gl.getUniformLocation(postProgram, "uBloomStrength");
+
+const postQuad = new Float32Array([
+    -1, -1, 0, 0,
+     1, -1, 1, 0,
+    -1,  1, 0, 1,
+    -1,  1, 0, 1,
+     1, -1, 1, 0,
+     1,  1, 1, 1
+]);
+
+const postVao = gl.createVertexArray();
+gl.bindVertexArray(postVao);
+
+const postVbo = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, postVbo);
+gl.bufferData(gl.ARRAY_BUFFER, postQuad, gl.STATIC_DRAW);
+
+const postPosLoc = gl.getAttribLocation(postProgram, "aPosition");
+const postUvLoc = gl.getAttribLocation(postProgram, "aUV");
+
+gl.enableVertexAttribArray(postPosLoc);
+gl.vertexAttribPointer(postPosLoc, 2, gl.FLOAT, false, 4 * 4, 0);
+
+gl.enableVertexAttribArray(postUvLoc);
+gl.vertexAttribPointer(postUvLoc, 2, gl.FLOAT, false, 4 * 4, 2 * 4);
+
+gl.bindVertexArray(null);
+
+function resizeRenderTargets() {
+    if (sceneColorTex) {
+        gl.deleteTexture(sceneColorTex);
+    }
+    if (sceneDepthRb) {
+        gl.deleteRenderbuffer(sceneDepthRb);
+    }
+    if (sceneFbo) {
+        gl.deleteFramebuffer(sceneFbo);
+    }
+
+    sceneColorTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, sceneColorTex);
+    gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        canvas.width,
+        canvas.height,
+        0,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        null
+    );
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    sceneDepthRb = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, sceneDepthRb);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, canvas.width, canvas.height);
+
+    sceneFbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, sceneColorTex, 0);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, sceneDepthRb);
+
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+        console.error("Bloom framebuffer is incomplete");
+    }
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+}
+
+resizeRenderTargets();
 
 // КУБЫ
 
@@ -425,36 +576,68 @@ function renderCube(num, tx) {
 
 // РЕНДЕР
 
-function render() {
-    gl.clearColor(0, 0, 0, 1);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    
+function drawScene() {
     gl.useProgram(program);
     renderCube(0, 0);
     renderCube(1, -1);
     renderCube(2, 1);
-    
+
     if (models.length > 0) {
         const aspect = canvas.width / canvas.height;
         const projection = createPerspectiveMatrix(Math.PI / 4, aspect, 0.1, 100);
-        
+
         models.forEach(model => {
             const modelMatrix = createTransformMatrix(
                 0, angley, 0,
                 model.scale, model.scale, model.scale,
                 model.posX, model.posY, -4
             );
-            
+
             gl.uniformMatrix4fv(modelLoc, false, modelMatrix);
             gl.uniformMatrix4fv(projectionLoc, false, projection);
-            
+
             gl.activeTexture(gl.TEXTURE0);
             gl.bindTexture(gl.TEXTURE_2D, model.texture);
             gl.uniform1i(textureLoc, 0);
-            
+
             gl.bindVertexArray(model.vao);
             gl.drawArrays(gl.TRIANGLES, 0, model.count);
         });
+    }
+}
+
+function render() {
+    if (bloomEnabled) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFbo);
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.clearColor(0.98, 0.96, 1.0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        drawScene();
+
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.clearColor(0.98, 0.96, 1.0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        gl.disable(gl.DEPTH_TEST);
+        gl.useProgram(postProgram);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, sceneColorTex);
+        gl.uniform1i(postSceneTexLoc, 0);
+        gl.uniform2f(postTexelSizeLoc, 1 / canvas.width, 1 / canvas.height);
+        gl.uniform1f(postBloomStrengthLoc, 0.85);
+
+        gl.bindVertexArray(postVao);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+        gl.bindVertexArray(null);
+        gl.enable(gl.DEPTH_TEST);
+    } else {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.clearColor(0.98, 0.96, 1.0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        drawScene();
     }
     
     anglex += 0.01;

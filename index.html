@@ -9,7 +9,7 @@
     padding: 0;
     height: 100%;
     overflow: hidden;
-    background: #05060a;
+    background: radial-gradient(circle at 20% 20%, #ffffff 0%, #f8f4ff 42%, #efe8ff 100%);
   }
 
   canvas {
@@ -64,12 +64,12 @@
 <body>
   <div id="info"></div>
   <div id="controls">
-    <label><input type="checkbox" id="toggleBloom" checked> Bloom</label>
-    <label><input type="checkbox" id="toggleVignette" checked> Vignette</label>
-    <label><input type="checkbox" id="toggleGrain" checked> Grain</label>
-    <label><input type="checkbox" id="toggleDof" checked> Depth of Field</label>
-    <label><input type="checkbox" id="toggleGrading" checked> Color Grading</label>
-    <label><input type="checkbox" id="toggleAdaptive" checked> Adaptive Quality</label>
+    <label><input type="checkbox" id="toggleBloom"> Bloom</label>
+    <label><input type="checkbox" id="toggleVignette"> Vignette</label>
+    <label><input type="checkbox" id="toggleGrain"> Grain</label>
+    <label><input type="checkbox" id="toggleDof"> Depth of Field</label>
+    <label><input type="checkbox" id="toggleGrading"> Color Grading</label>
+    <label><input type="checkbox" id="toggleAdaptive"> Adaptive Quality</label>
   </div>
   <canvas id="glcanvas" width="600" height="600"></canvas>
   <script src="main.js"></script>
