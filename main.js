@@ -7,7 +7,7 @@ if (!gl) {
 
 let sceneFbo = null;
 let sceneColorTex = null;
-let sceneDepthRb = null;
+let sceneDepthTex = null;
 
 const bloomCheckbox = document.getElementById("toggleBloom");
 let bloomEnabled = bloomCheckbox ? bloomCheckbox.checked : false;
@@ -15,6 +15,8 @@ const vignetteCheckbox = document.getElementById("toggleVignette");
 let vignetteEnabled = vignetteCheckbox ? vignetteCheckbox.checked : false;
 const grainCheckbox = document.getElementById("toggleGrain");
 let grainEnabled = grainCheckbox ? grainCheckbox.checked : false;
+const dofCheckbox = document.getElementById("toggleDof");
+let dofEnabled = dofCheckbox ? dofCheckbox.checked : false;
 
 if (bloomCheckbox) {
     bloomCheckbox.addEventListener("change", (event) => {
@@ -31,6 +33,12 @@ if (vignetteCheckbox) {
 if (grainCheckbox) {
     grainCheckbox.addEventListener("change", (event) => {
         grainEnabled = event.target.checked;
+    });
+}
+
+if (dofCheckbox) {
+    dofCheckbox.addEventListener("change", (event) => {
+        dofEnabled = event.target.checked;
     });
 }
 
@@ -150,6 +158,15 @@ function createPerspectiveMatrix(fov, aspect, near, far) {
     ]);
 }
 
+function viewZToDepth(viewZ, near, far) {
+    const a = (far + near) / (near - far);
+    const b = (2 * far * near) / (near - far);
+    const clipZ = a * viewZ + b;
+    const clipW = -viewZ;
+    const ndcZ = clipZ / clipW;
+    return ndcZ * 0.5 + 0.5;
+}
+
 // ШЕЙДЕРЫ
 // Кубы
 const vsSource = `#version 300 es
@@ -196,10 +213,15 @@ precision highp float;
 in vec2 vUV;
 
 uniform sampler2D uSceneTex;
+uniform sampler2D uDepthTex;
 uniform vec2 uTexelSize;
 uniform float uBloomStrength;
 uniform float uVignetteStrength;
 uniform float uGrainStrength;
+uniform float uDofStrength;
+uniform float uFocusDepth;
+uniform float uNear;
+uniform float uFar;
 uniform float uTime;
 
 out vec4 outColor;
@@ -215,8 +237,37 @@ float randomNoise(vec2 p) {
     return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
 }
 
+float linearizeDepth(float d) {
+    float z = d * 2.0 - 1.0;
+    return (2.0 * uNear * uFar) / (uFar + uNear - z * (uFar - uNear));
+}
+
+vec3 dofBlur(vec2 uv, float coc) {
+    float radius = coc * 7.0;
+    vec2 off = uTexelSize * radius;
+
+    vec3 c = texture(uSceneTex, uv).rgb * 0.22;
+    c += texture(uSceneTex, uv + vec2(off.x, 0.0)).rgb * 0.12;
+    c += texture(uSceneTex, uv - vec2(off.x, 0.0)).rgb * 0.12;
+    c += texture(uSceneTex, uv + vec2(0.0, off.y)).rgb * 0.12;
+    c += texture(uSceneTex, uv - vec2(0.0, off.y)).rgb * 0.12;
+    c += texture(uSceneTex, uv + off).rgb * 0.08;
+    c += texture(uSceneTex, uv - off).rgb * 0.08;
+    c += texture(uSceneTex, uv + vec2(-off.x, off.y)).rgb * 0.07;
+    c += texture(uSceneTex, uv + vec2(off.x, -off.y)).rgb * 0.07;
+    return c;
+}
+
 void main() {
     vec3 base = texture(uSceneTex, vUV).rgb;
+    float depthRaw = texture(uDepthTex, vUV).r;
+    float sceneDepthLin = linearizeDepth(depthRaw);
+    float focusDepthLin = linearizeDepth(uFocusDepth);
+    float depthDelta = abs(sceneDepthLin - focusDepthLin);
+    float coc = smoothstep(0.12, 1.3, depthDelta) * uDofStrength;
+    vec3 dofColor = dofBlur(vUV, coc);
+    base = mix(base, dofColor, clamp(coc, 0.0, 1.0));
+
     vec2 o1 = uTexelSize * 1.5;
     vec2 o2 = uTexelSize * 3.0;
 
@@ -284,10 +335,15 @@ if (!gl.getProgramParameter(postProgram, gl.LINK_STATUS)) {
 }
 
 const postSceneTexLoc = gl.getUniformLocation(postProgram, "uSceneTex");
+const postDepthTexLoc = gl.getUniformLocation(postProgram, "uDepthTex");
 const postTexelSizeLoc = gl.getUniformLocation(postProgram, "uTexelSize");
 const postBloomStrengthLoc = gl.getUniformLocation(postProgram, "uBloomStrength");
 const postVignetteStrengthLoc = gl.getUniformLocation(postProgram, "uVignetteStrength");
 const postGrainStrengthLoc = gl.getUniformLocation(postProgram, "uGrainStrength");
+const postDofStrengthLoc = gl.getUniformLocation(postProgram, "uDofStrength");
+const postFocusDepthLoc = gl.getUniformLocation(postProgram, "uFocusDepth");
+const postNearLoc = gl.getUniformLocation(postProgram, "uNear");
+const postFarLoc = gl.getUniformLocation(postProgram, "uFar");
 const postTimeLoc = gl.getUniformLocation(postProgram, "uTime");
 
 const postQuad = new Float32Array([
@@ -321,8 +377,8 @@ function resizeRenderTargets() {
     if (sceneColorTex) {
         gl.deleteTexture(sceneColorTex);
     }
-    if (sceneDepthRb) {
-        gl.deleteRenderbuffer(sceneDepthRb);
+    if (sceneDepthTex) {
+        gl.deleteTexture(sceneDepthTex);
     }
     if (sceneFbo) {
         gl.deleteFramebuffer(sceneFbo);
@@ -346,14 +402,28 @@ function resizeRenderTargets() {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-    sceneDepthRb = gl.createRenderbuffer();
-    gl.bindRenderbuffer(gl.RENDERBUFFER, sceneDepthRb);
-    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, canvas.width, canvas.height);
+    sceneDepthTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, sceneDepthTex);
+    gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.DEPTH_COMPONENT24,
+        canvas.width,
+        canvas.height,
+        0,
+        gl.DEPTH_COMPONENT,
+        gl.UNSIGNED_INT,
+        null
+    );
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
     sceneFbo = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, sceneColorTex, 0);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, sceneDepthRb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, sceneDepthTex, 0);
 
     if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
         console.error("Bloom framebuffer is incomplete");
@@ -361,7 +431,6 @@ function resizeRenderTargets() {
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.bindTexture(gl.TEXTURE_2D, null);
-    gl.bindRenderbuffer(gl.RENDERBUFFER, null);
 }
 
 resizeRenderTargets();
@@ -644,7 +713,11 @@ function drawScene() {
 }
 
 function render() {
-    if (bloomEnabled || vignetteEnabled || grainEnabled) {
+    const cameraNear = 0.1;
+    const cameraFar = 100.0;
+    const bananaFocusDepth = viewZToDepth(-4.0, cameraNear, cameraFar);
+
+    if (bloomEnabled || vignetteEnabled || grainEnabled || dofEnabled) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFbo);
         gl.viewport(0, 0, canvas.width, canvas.height);
         gl.clearColor(1.0, 1.0, 1.0, 1.0);
@@ -662,10 +735,19 @@ function render() {
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, sceneColorTex);
         gl.uniform1i(postSceneTexLoc, 0);
+
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, sceneDepthTex);
+        gl.uniform1i(postDepthTexLoc, 1);
+
         gl.uniform2f(postTexelSizeLoc, 1 / canvas.width, 1 / canvas.height);
         gl.uniform1f(postBloomStrengthLoc, bloomEnabled ? 0.85 : 0.0);
         gl.uniform1f(postVignetteStrengthLoc, vignetteEnabled ? 1.0 : 0.0);
         gl.uniform1f(postGrainStrengthLoc, grainEnabled ? 0.14 : 0.0);
+        gl.uniform1f(postDofStrengthLoc, dofEnabled ? 1.0 : 0.0);
+        gl.uniform1f(postFocusDepthLoc, bananaFocusDepth);
+        gl.uniform1f(postNearLoc, cameraNear);
+        gl.uniform1f(postFarLoc, cameraFar);
         gl.uniform1f(postTimeLoc, performance.now() * 0.001);
 
         gl.bindVertexArray(postVao);
