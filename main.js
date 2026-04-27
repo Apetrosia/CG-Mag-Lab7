@@ -687,11 +687,18 @@ function render() {
         gl.bindTexture(gl.TEXTURE_2D, sceneColorTex);
         gl.uniform1i(postSceneTexLoc, 0);
 
+        // animated parameters: time + intensity modulation
+        const t = performance.now() * 0.001;
+        const anim = 0.5 + 0.5 * Math.sin(t * 0.9);
+        const bloomStrength = bloomEnabled ? 0.85 * anim : 0.0;
+        const vignetteStrength = vignetteEnabled ? 1.0 * (0.6 + 0.6 * anim) : 0.0;
+        const grainStrength = grainEnabled ? 0.14 * (0.3 + 1.2 * anim) : 0.0;
+
         gl.uniform2f(postTexelSizeLoc, 1 / canvas.width, 1 / canvas.height);
-        gl.uniform1f(postBloomStrengthLoc, bloomEnabled ? 0.85 : 0.0);
-        gl.uniform1f(postVignetteStrengthLoc, vignetteEnabled ? 1.0 : 0.0);
-        gl.uniform1f(postGrainStrengthLoc, grainEnabled ? 0.14 : 0.0);
-        gl.uniform1f(postTimeLoc, performance.now() * 0.001);
+        gl.uniform1f(postBloomStrengthLoc, bloomStrength);
+        gl.uniform1f(postVignetteStrengthLoc, vignetteStrength);
+        gl.uniform1f(postGrainStrengthLoc, grainStrength);
+        gl.uniform1f(postTimeLoc, t);
 
         gl.bindVertexArray(postVao);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
