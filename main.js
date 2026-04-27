@@ -15,6 +15,8 @@ const vignetteCheckbox = document.getElementById("toggleVignette");
 let vignetteEnabled = vignetteCheckbox ? vignetteCheckbox.checked : false;
 const grainCheckbox = document.getElementById("toggleGrain");
 let grainEnabled = grainCheckbox ? grainCheckbox.checked : false;
+const gradingCheckbox = document.getElementById("toggleGrading");
+let gradingEnabled = gradingCheckbox ? gradingCheckbox.checked : false;
 
 if (bloomCheckbox) {
     bloomCheckbox.addEventListener("change", (event) => {
@@ -31,6 +33,12 @@ if (vignetteCheckbox) {
 if (grainCheckbox) {
     grainCheckbox.addEventListener("change", (event) => {
         grainEnabled = event.target.checked;
+    });
+}
+
+if (gradingCheckbox) {
+    gradingCheckbox.addEventListener("change", (event) => {
+        gradingEnabled = event.target.checked;
     });
 }
 
@@ -205,10 +213,13 @@ precision highp float;
 in vec2 vUV;
 
 uniform sampler2D uSceneTex;
+uniform sampler2D uLutIdentity;
+uniform sampler2D uLutStyled;
 uniform vec2 uTexelSize;
 uniform float uBloomStrength;
 uniform float uVignetteStrength;
 uniform float uGrainStrength;
+uniform float uGradingStrength;
 uniform float uTime;
 
 out vec4 outColor;
@@ -222,6 +233,25 @@ vec3 extractBright(vec2 uv) {
 
 float randomNoise(vec2 p) {
     return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+vec3 sampleLutStrip(sampler2D lutTex, vec3 color) {
+    vec2 lutSizePx = vec2(textureSize(lutTex, 0));
+    float size = lutSizePx.y;
+    float maxIndex = max(size - 1.0, 1.0);
+
+    float blueIndex = color.b * maxIndex;
+    float z0 = floor(blueIndex);
+    float z1 = min(z0 + 1.0, maxIndex);
+    float zMix = fract(blueIndex);
+
+    float x0 = (z0 * size + color.r * maxIndex + 0.5) / lutSizePx.x;
+    float x1 = (z1 * size + color.r * maxIndex + 0.5) / lutSizePx.x;
+    float y = (color.g * maxIndex + 0.5) / lutSizePx.y;
+
+    vec3 c0 = texture(lutTex, vec2(x0, y)).rgb;
+    vec3 c1 = texture(lutTex, vec2(x1, y)).rgb;
+    return mix(c0, c1, zMix);
 }
 
 void main() {
@@ -246,6 +276,12 @@ void main() {
     vec2 pixel = vUV / uTexelSize;
     float grain = randomNoise(pixel + vec2(uTime * 60.0, uTime * 23.0)) - 0.5;
     color += grain * uGrainStrength;
+
+    vec3 gradedA = sampleLutStrip(uLutIdentity, color);
+    vec3 gradedB = sampleLutStrip(uLutStyled, color);
+    vec3 gradedColor = mix(gradedA, gradedB, 1.0);
+    color = mix(color, gradedColor, uGradingStrength);
+
     color = clamp(color, 0.0, 1.0);
 
     outColor = vec4(color, 1.0);
@@ -294,10 +330,13 @@ if (!gl.getProgramParameter(postProgram, gl.LINK_STATUS)) {
 }
 
 const postSceneTexLoc = gl.getUniformLocation(postProgram, "uSceneTex");
+const postLutIdentityLoc = gl.getUniformLocation(postProgram, "uLutIdentity");
+const postLutStyledLoc = gl.getUniformLocation(postProgram, "uLutStyled");
 const postTexelSizeLoc = gl.getUniformLocation(postProgram, "uTexelSize");
 const postBloomStrengthLoc = gl.getUniformLocation(postProgram, "uBloomStrength");
 const postVignetteStrengthLoc = gl.getUniformLocation(postProgram, "uVignetteStrength");
 const postGrainStrengthLoc = gl.getUniformLocation(postProgram, "uGrainStrength");
+const postGradingStrengthLoc = gl.getUniformLocation(postProgram, "uGradingStrength");
 const postTimeLoc = gl.getUniformLocation(postProgram, "uTime");
 
 const postQuad = new Float32Array([
@@ -493,11 +532,154 @@ function loadTexture(src) {
     return texture;
 }
 
+function createGeneratedLutTexture(size, gradingFn) {
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+    const width = size * size;
+    const height = size;
+    const data = new Uint8Array(width * height * 4);
+
+    for (let bz = 0; bz < size; bz++) {
+        for (let gy = 0; gy < size; gy++) {
+            for (let rx = 0; rx < size; rx++) {
+                const srcR = rx / (size - 1);
+                const srcG = gy / (size - 1);
+                const srcB = bz / (size - 1);
+
+                const graded = gradingFn(srcR, srcG, srcB);
+                const outR = Math.min(1, Math.max(0, graded[0]));
+                const outG = Math.min(1, Math.max(0, graded[1]));
+                const outB = Math.min(1, Math.max(0, graded[2]));
+
+                const x = bz * size + rx;
+                const y = gy;
+                const i = (y * width + x) * 4;
+                data[i + 0] = Math.round(outR * 255);
+                data[i + 1] = Math.round(outG * 255);
+                data[i + 2] = Math.round(outB * 255);
+                data[i + 3] = 255;
+            }
+        }
+    }
+
+    gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        width,
+        height,
+        0,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        data
+    );
+
+    return texture;
+}
+
+function createLutTextureFromCubeText(cubeText) {
+    const lines = cubeText.split(/\r?\n/);
+    let size = 0;
+    const colorRows = [];
+
+    for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith("#")) {
+            continue;
+        }
+
+        const tokens = line.split(/\s+/);
+        if (tokens[0] === "TITLE" || tokens[0] === "DOMAIN_MIN" || tokens[0] === "DOMAIN_MAX") {
+            continue;
+        }
+
+        if (tokens[0] === "LUT_3D_SIZE") {
+            size = parseInt(tokens[1], 10);
+            continue;
+        }
+
+        if (tokens.length >= 3) {
+            const r = parseFloat(tokens[0]);
+            const g = parseFloat(tokens[1]);
+            const b = parseFloat(tokens[2]);
+            if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) {
+                colorRows.push([r, g, b]);
+            }
+        }
+    }
+
+    if (!size || colorRows.length !== size * size * size) {
+        throw new Error(`Invalid cube LUT data: expected ${size * size * size} rows, got ${colorRows.length}`);
+    }
+
+    const width = size * size;
+    const height = size;
+    const data = new Uint8Array(width * height * 4);
+
+    for (let i = 0; i < colorRows.length; i++) {
+        const rIndex = Math.floor(i / (size * size));
+        const gIndex = Math.floor((i / size) % size);
+        const bIndex = i % size;
+        const [r, g, b] = colorRows[i];
+
+        const x = bIndex * size + rIndex;
+        const y = gIndex;
+        const offset = (y * width + x) * 4;
+
+        data[offset + 0] = Math.round(Math.min(1, Math.max(0, r)) * 255);
+        data[offset + 1] = Math.round(Math.min(1, Math.max(0, g)) * 255);
+        data[offset + 2] = Math.round(Math.min(1, Math.max(0, b)) * 255);
+        data[offset + 3] = 255;
+    }
+
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        width,
+        height,
+        0,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        data
+    );
+
+    return texture;
+}
+
 const textureMat = [];
 
 textureMat.push(loadTexture("textures/gold.jpg"));
 textureMat.push(loadTexture("textures/copper.jpg"));
 textureMat.push(loadTexture("textures/tree.jpg"));
+
+const lutSize = 33;
+const lutIdentityTex = createGeneratedLutTexture(lutSize, (r, g, b) => [r, g, b]);
+let lutStyledTex = createGeneratedLutTexture(lutSize, (r, g, b) => [r, g, b]);
+let lutReady = false;
+
+fetch("textures/08_Film%20Emulation%20LUTs_B%26W.cube")
+    .then((response) => response.text())
+    .then((cubeText) => {
+        lutStyledTex = createLutTextureFromCubeText(cubeText);
+        lutReady = true;
+    })
+    .catch((error) => {
+        console.error("Failed to load cube LUT:", error);
+        lutReady = false;
+    });
 
 const models = [];
 
@@ -668,17 +850,17 @@ function drawScene() {
 
 function render() {
 
-    if (bloomEnabled || vignetteEnabled || grainEnabled) {
+    if (bloomEnabled || vignetteEnabled || grainEnabled || gradingEnabled) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFbo);
         gl.viewport(0, 0, canvas.width, canvas.height);
-        gl.clearColor(1.0, 1.0, 1.0, 1.0);
+        gl.clearColor(0.87, 0.94, 1.0, 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
         drawScene();
 
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.viewport(0, 0, canvas.width, canvas.height);
-        gl.clearColor(1.0, 1.0, 1.0, 1.0);
+        gl.clearColor(0.87, 0.94, 1.0, 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT);
 
         gl.disable(gl.DEPTH_TEST);
@@ -687,17 +869,27 @@ function render() {
         gl.bindTexture(gl.TEXTURE_2D, sceneColorTex);
         gl.uniform1i(postSceneTexLoc, 0);
 
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, lutIdentityTex);
+        gl.uniform1i(postLutIdentityLoc, 1);
+
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, lutStyledTex);
+        gl.uniform1i(postLutStyledLoc, 2);
+
         // animated parameters: time + intensity modulation
         const t = performance.now() * 0.001;
         const anim = 0.5 + 0.5 * Math.sin(t * 0.9);
         const bloomStrength = bloomEnabled ? 0.85 * anim : 0.0;
         const vignetteStrength = vignetteEnabled ? 1.0 * (0.6 + 0.6 * anim) : 0.0;
         const grainStrength = grainEnabled ? 0.14 * (0.3 + 1.2 * anim) : 0.0;
+        const gradingStrength = gradingEnabled ? 1.0 : 0.0;
 
         gl.uniform2f(postTexelSizeLoc, 1 / canvas.width, 1 / canvas.height);
         gl.uniform1f(postBloomStrengthLoc, bloomStrength);
         gl.uniform1f(postVignetteStrengthLoc, vignetteStrength);
         gl.uniform1f(postGrainStrengthLoc, grainStrength);
+        gl.uniform1f(postGradingStrengthLoc, gradingStrength);
         gl.uniform1f(postTimeLoc, t);
 
         gl.bindVertexArray(postVao);
@@ -707,7 +899,7 @@ function render() {
     } else {
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.viewport(0, 0, canvas.width, canvas.height);
-        gl.clearColor(1.0, 1.0, 1.0, 1.0);
+        gl.clearColor(0.87, 0.94, 1.0, 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         drawScene();
     }
