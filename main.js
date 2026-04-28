@@ -277,7 +277,8 @@ void main() {
     float grain = randomNoise(pixel + vec2(uTime * 60.0, uTime * 23.0)) - 0.5;
     color += grain * uGrainStrength;
 
-    color = sampleLutStrip(uLutStyled, color);
+    vec3 gradedColor = sampleLutStrip(uLutStyled, color);
+    color = mix(color, gradedColor, uGradingStrength);
 
     color = clamp(color, 0.0, 1.0);
 
@@ -880,7 +881,7 @@ function render() {
         const bloomStrength = bloomEnabled ? 0.85 * anim : 0.0;
         const vignetteStrength = vignetteEnabled ? 1.0 * (0.6 + 0.6 * anim) : 0.0;
         const grainStrength = grainEnabled ? 0.14 * (0.3 + 1.2 * anim) : 0.0;
-        const gradingStrength = gradingEnabled ? 1.0 : 0.0;
+        const gradingStrength = gradingEnabled ? 1.0 * anim : 0.0;
 
         gl.uniform2f(postTexelSizeLoc, 1 / canvas.width, 1 / canvas.height);
         gl.uniform1f(postBloomStrengthLoc, bloomStrength);
