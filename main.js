@@ -875,7 +875,6 @@ function render() {
         gl.bindTexture(gl.TEXTURE_2D, lutStyledTex);
         gl.uniform1i(postLutStyledLoc, 2);
 
-        // animated parameters: time + intensity modulation
         const t = performance.now() * 0.001;
         const anim = 0.5 + 0.5 * Math.sin(t * 0.9);
         const bloomStrength = bloomEnabled ? 0.85 * anim : 0.0;
