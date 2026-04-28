@@ -277,9 +277,7 @@ void main() {
     float grain = randomNoise(pixel + vec2(uTime * 60.0, uTime * 23.0)) - 0.5;
     color += grain * uGrainStrength;
 
-    vec3 gradedA = sampleLutStrip(uLutIdentity, color);
-    vec3 gradedB = sampleLutStrip(uLutStyled, color);
-    vec3 gradedColor = mix(gradedA, gradedB, 1.0);
+    vec3 gradedColor = sampleLutStrip(uLutStyled, color);
     color = mix(color, gradedColor, uGradingStrength);
 
     color = clamp(color, 0.0, 1.0);
